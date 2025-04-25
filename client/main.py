@@ -13,6 +13,8 @@ async def handle_client(websocket):
     client_id = id(websocket)
     print(f"[+] Client {client_id} connected. Total: {len(connected_clients)}")
 
+    await asyncio.sleep(0.1)  # ⏳ give the handshake time to complete (100ms)
+
     # 🔄 Immediately send time sync
     now = time.time()
     message = {
@@ -68,4 +70,11 @@ async def main():
             await wait_for_user_input()
 
 
-asyncio.run(main())
+if __name__ == "__main__":
+    while True:
+        try:
+            asyncio.run(main())
+        except Exception as e:
+            print(f"❌ Unexpected error: {e}")
+            print("🔄 Restarting server...")
+            time.sleep(2)
