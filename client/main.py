@@ -1,44 +1,71 @@
-import serial
-import struct
+import asyncio
+import websockets
 import time
+import json
 
-port = "COM6"  # Replace with your ESP32-CAM serial port
-baud_rate = 115200
-ser = serial.Serial(port, baud_rate, timeout=10)
+PORT = 8765
+SYNC_DELAY = 5  # seconds from now to capture
 
-def capture_image():
-    ser.write(b"CAPTURE\n")
-    ser.flush()  # Ensure the command is sent immediately
+connected_clients = set()
 
-    print("Waiting for ESP32-CAM to respond...")
-    ack = ser.readline().decode().strip()
-    if ack != "Taking picture...":
-        print(f"Unexpected response: {ack}")
-        return
+async def handle_client(websocket):
+    connected_clients.add(websocket)
+    client_id = id(websocket)
+    print(f"[+] Client {client_id} connected. Total: {len(connected_clients)}")
 
-    size_bytes = ser.read(4)
-    if len(size_bytes) < 4:
-        print("Failed to read image size")
-        return
+    # 🔄 Immediately send time sync
+    now = time.time()
+    message = {
+        "type": "sync",
+        "time": now
+    }
+    await websocket.send(json.dumps(message))
 
-    size = struct.unpack('<I', size_bytes)[0]
-    print(f"Image size: {size} bytes")
-
-    image_data = ser.read(size)
-    if len(image_data) < size:
-        print("Failed to read complete image data")
-        return
-
-    with open("captured_image.jpg", "wb") as file:
-        file.write(image_data)
-    print("Image saved as 'captured_image.jpg'")
-
-if __name__ == "__main__":
     try:
-        print("Waiting for ESP32-CAM...")
-        input("Press Enter to take a picture.")
-        capture_image()
-    except Exception as e:
-        print(f"An error occurred: {e}")
+        await websocket.wait_closed()
     finally:
-        ser.close()
+        connected_clients.remove(websocket)
+        print(f"[-] Client {client_id} disconnected. Total: {len(connected_clients)}")
+
+async def wait_for_user_input():
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, input, "\nPress ENTER to trigger synchronized capture...")
+
+    capture_time = time.time() + SYNC_DELAY
+    message = {
+        "type": "capture",
+        "time": capture_time
+    }
+
+    print(f"\n📸 Sending capture request for T = {capture_time:.3f} to {len(connected_clients)} clients")
+
+    if connected_clients:
+        await asyncio.gather(*[client.send(json.dumps(message)) for client in connected_clients])
+    else:
+        print("⚠️ No clients connected!")
+
+async def broadcast_time():
+    while True:
+        if connected_clients:
+            now = time.time()
+            message = {
+                "type": "sync",
+                "time": now
+            }
+            await asyncio.gather(*[client.send(json.dumps(message)) for client in connected_clients])
+        await asyncio.sleep(5)
+
+async def main():
+    async with websockets.serve(
+            handle_client,
+            "0.0.0.0",
+            PORT,
+            ping_interval=5,  # send pings every 5 seconds
+            ping_timeout=5  # disconnect if no pong after 5 seconds
+    ):
+        asyncio.create_task(broadcast_time())
+        while True:
+            await wait_for_user_input()
+
+
+asyncio.run(main())
