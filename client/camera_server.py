@@ -4,6 +4,7 @@ import time
 import json
 import os
 import logging
+import csv
 
 logger = logging.getLogger("camera_server")
 logger.setLevel(logging.INFO)
@@ -15,9 +16,12 @@ TIMEOUT = 5     # seconds to wait for images
 connected_clients = set()
 client_name_map = {}  # NEW: websocket -> device name
 current_capture_folder = None
+metadata_records = {}  # NEW: device_name -> metadata dictionary
 
 capture_expected_clients = set()
 capture_received_clients = set()
+
+datasheet_name = f"capture_log{time.time()}.csv"
 
 # === Handle each client ===
 async def handle_client(websocket):
@@ -75,7 +79,12 @@ async def handle_client(websocket):
 
             else:
                 data = json.loads(message)
-                logger.info(f"📩 Text message: {data}")
+                if data.get("type") == "capture_metadata":
+                    device_name = data.get("device_id", f"unknown_{id(websocket)}")
+                    metadata_records[device_name] = data
+                    logger.info(f"📝 Metadata received from {device_name}")
+                else:
+                    logger.info(f"📩 Text message: {data}")
 
     except websockets.exceptions.ConnectionClosed:
         pass
@@ -113,7 +122,8 @@ async def start_server():
 async def trigger_capture_and_wait(sync_delay=SYNC_DELAY, timeout=TIMEOUT):
     global current_capture_folder, capture_expected_clients, capture_received_clients
 
-    capture_time = time.time() + sync_delay
+    capture_request_received_time = time.time()
+    capture_time = capture_request_received_time + sync_delay
     timestamp_str = time.strftime("%Y-%m-%d_%H-%M-%S", time.localtime(capture_time))
     current_capture_folder = f"output/capture_{timestamp_str}"
     os.makedirs(current_capture_folder, exist_ok=True)
@@ -140,8 +150,16 @@ async def trigger_capture_and_wait(sync_delay=SYNC_DELAY, timeout=TIMEOUT):
             "folder": current_capture_folder
         }
 
-    # Wait for images to arrive
-    await asyncio.sleep(timeout)
+    # Wait intelligently for all images to arrive
+    max_wait = timeout
+    check_interval = 0.1  # seconds
+    waited = 0
+
+    while waited < max_wait:
+        if capture_expected_clients == capture_received_clients:
+            break
+        await asyncio.sleep(check_interval)
+        waited += check_interval
 
     missing_clients = capture_expected_clients - capture_received_clients
     saved_images = len(capture_received_clients)
@@ -155,7 +173,82 @@ async def trigger_capture_and_wait(sync_delay=SYNC_DELAY, timeout=TIMEOUT):
             "saved_images": saved_images,
             "folder": current_capture_folder}
     else:
+        images_received_time = time.time()
         logger.info("✅ All images received!")
+
+        save_capture_to_csv(
+            current_capture_folder,
+            metadata_records,
+            capture_request_received_time,
+            images_received_time,
+            sync_delay,
+            len(capture_expected_clients)
+        )
+
         return {"success": True,
                 "saved_images": saved_images,
                 "folder": current_capture_folder}
+
+
+
+def save_capture_to_csv(capture_folder, metadata_records, capture_request_received_time, images_received_time, sync_delay, num_modules):
+    csv_path = datasheet_name
+    file_exists = os.path.isfile(csv_path)
+
+    # Build list of all devices
+    all_devices = sorted(metadata_records.keys())
+
+    # Build CSV header dynamically
+    fieldnames = ["capture_folder", "capture_request_received_time", "images_received_time", "sync_delay", "num_modules"]
+    for device in all_devices:
+        fieldnames.extend([
+            f"{device}_capture_request_received",
+            f"{device}_capture_started",
+            f"{device}_capture_completed",
+            f"{device}_image_sent",
+            f"{device}_rssi",
+            f"{device}_resolution",
+            f"{device}_jpeg_quality",
+            f"{device}_image_size",
+        ])
+
+    # Now always open the file for reading first (if exists)
+    old_rows = []
+    if file_exists:
+        with open(csv_path, mode='r', newline='') as csvfile:
+            reader = csv.DictReader(csvfile)
+            for row in reader:
+                old_rows.append(row)
+
+    # Now overwrite file
+    with open(csv_path, mode='w', newline='') as csvfile:
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        writer.writeheader()
+
+        # Re-write old rows, adapting them
+        for old_row in old_rows:
+            adapted_row = {field: old_row.get(field, "") for field in fieldnames}
+            writer.writerow(adapted_row)
+
+        # Write new row
+        new_row = {
+            "capture_folder": capture_folder,
+            "capture_request_received_time": capture_request_received_time,
+            "images_received_time": images_received_time,
+            "sync_delay": sync_delay,
+            "num_modules": num_modules,
+        }
+
+        for device, meta in metadata_records.items():
+            times = meta.get("times", {})
+            new_row[f"{device}_capture_request_received"] = times.get("capture_request_received")
+            new_row[f"{device}_capture_started"] = times.get("capture_started")
+            new_row[f"{device}_capture_completed"] = times.get("capture_completed")
+            new_row[f"{device}_image_sent"] = times.get("image_sent")
+
+            new_row[f"{device}_rssi"] = meta.get("rssi")
+            new_row[f"{device}_resolution"] = meta.get("resolution")
+            new_row[f"{device}_jpeg_quality"] = meta.get("jpeg_quality")
+            new_row[f"{device}_image_size"] = meta.get("image_size")
+
+        writer.writerow(new_row)

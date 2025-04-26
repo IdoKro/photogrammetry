@@ -23,7 +23,22 @@ def setup_camera_server_logger():
     handler.setFormatter(formatter)
     logger.addHandler(handler)
 
-# setup_camera_server_logger()  # <-- move outside async
+setup_camera_server_logger()  # <-- move outside async
+
+async def wait_for_user_input():
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, input, "\nPress ENTER to trigger synchronized capture...")
+    result = await camera_server.trigger_capture_and_wait()
+    await asyncio.sleep(0.2)  # give server a moment to start
+
+    if result["success"]:
+        num_images = result["saved_images"]
+        folder = result["folder"]
+
+        print(f"🎉 Capture successful! {num_images} Images were saved to {folder}")
+    else:
+        print(f"❌ Capture failed. Missing images from: {result.get('missing', [])}")
+
 
 async def main():
     # Start the server
@@ -32,17 +47,7 @@ async def main():
     await asyncio.sleep(2)  # give server a moment to start
 
     while True:
-        input("Press Enter to capture...\n")
-        result = await camera_server.trigger_capture_and_wait()
-        await asyncio.sleep(0.2)  # give server a moment to start
-
-        if result["success"]:
-            num_images = result["saved_images"]
-            folder = result["folder"]
-
-            print(f"🎉 Capture successful! {num_images} Images were saved to {folder}")
-        else:
-            print(f"❌ Capture failed. Missing images from: {result.get('missing', [])}")
+        await wait_for_user_input()
 
 if __name__ == "__main__":
     asyncio.run(main())
