@@ -2,38 +2,89 @@ import asyncio
 import websockets
 import time
 import json
+import os
 
 PORT = 8765
-SYNC_DELAY = 5  # seconds from now to capture
+SYNC_DELAY = 2  # seconds from now to capture
 
 connected_clients = set()
+client_name_map = {}  # NEW: websocket -> device name
+current_capture_folder = None
 
 async def handle_client(websocket):
+    global current_capture_folder
+
     connected_clients.add(websocket)
     client_id = id(websocket)
+    device_name = f"client_{client_id}"  # fallback if no hello
+
     print(f"[+] Client {client_id} connected. Total: {len(connected_clients)}")
 
-    await asyncio.sleep(0.1)  # ⏳ give the handshake time to complete (100ms)
+    try:
+        # Try to receive hello message
+        hello_raw = await asyncio.wait_for(websocket.recv(), timeout=2.0)
+        hello = json.loads(hello_raw)
 
-    # 🔄 Immediately send time sync
+        if hello.get("type") == "hello":
+            device_name = hello.get("device_id", device_name)
+            print(f"🤖 Device name received: {device_name}")
+        else:
+            print(f"⚠️ Unexpected first message: {hello}")
+
+    except Exception as e:
+        print(f"⚠️ No hello message received: {e}")
+
+    # Save mapping
+    client_name_map[websocket] = device_name
+
+    await asyncio.sleep(0.1)
+
+    # Send time sync
     now = time.time()
-    message = {
+    await websocket.send(json.dumps({
         "type": "sync",
         "time": now
-    }
-    await websocket.send(json.dumps(message))
+    }))
 
     try:
-        await websocket.wait_closed()
+        async for message in websocket:
+            if isinstance(message, bytes):
+                sender_name = client_name_map.get(websocket, f"unknown_{client_id}")
+                print(f"📸 Received image from {sender_name}: {len(message)} bytes")
+
+                # Save image
+                if current_capture_folder is None:
+                    current_capture_folder = "output/uncategorized"  # fallback
+                    os.makedirs(current_capture_folder, exist_ok=True)
+
+                filename = f"{current_capture_folder}/{sender_name}.jpg"
+                with open(filename, "wb") as f:
+                    f.write(message)
+                print(f"💾 Saved {filename}")
+
+            else:
+                data = json.loads(message)
+                print(f"📩 Text message: {data}")
+
+    except websockets.exceptions.ConnectionClosed:
+        pass
+
     finally:
         connected_clients.remove(websocket)
-        print(f"[-] Client {client_id} disconnected. Total: {len(connected_clients)}")
+        client_name_map.pop(websocket, None)
+        print(f"[-] Client {device_name} disconnected. Total: {len(connected_clients)}")
 
 async def wait_for_user_input():
+    global current_capture_folder
+
     loop = asyncio.get_event_loop()
-    await loop.run_in_executor(None, input, "\nPress ENTER to trigger synchronized capture...")
+    await loop.run_in_executor(None, input, "\nPress ENTER to trigger synchronized capture...\n")
 
     capture_time = time.time() + SYNC_DELAY
+    timestamp_str = time.strftime("%Y-%m-%d_%H-%M-%S", time.localtime(capture_time))
+    current_capture_folder = f"output/capture_{timestamp_str}"
+    os.makedirs(current_capture_folder, exist_ok=True)
+
     message = {
         "type": "capture",
         "time": capture_time
@@ -63,7 +114,7 @@ async def main():
             "0.0.0.0",
             PORT,
             ping_interval=5,  # send pings every 5 seconds
-            ping_timeout=5  # disconnect if no pong after 5 seconds
+            ping_timeout=10  # disconnect if no pong after 5 seconds
     ):
         asyncio.create_task(broadcast_time())
         while True:

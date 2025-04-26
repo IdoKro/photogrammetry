@@ -11,12 +11,6 @@ double timeOffset = 0;
 unsigned long lastWsReconnectAttempt = 0;
 const unsigned long WS_RECONNECT_INTERVAL = 5000;
 
-void safe_reset(){
-  Serial.println("🔄 Restarting device...");
-  delay(100);  // Allow time for message to flush
-  ESP.restart();
-}
-
 void setup() {
 
   pinMode(LED_GPIO_NUM, OUTPUT);
@@ -27,9 +21,6 @@ void setup() {
   Serial.println("\n");
 
   bool connection_status = connectToWiFi();
-  if (!connection_status) {
-    safe_reset();
-  }
   
   bool camera_status = startCamera();
 
@@ -53,6 +44,8 @@ void loop() {
     unsigned long now = millis();
     if (now - lastWsReconnectAttempt >= WS_RECONNECT_INTERVAL) {
       Serial.println("🔄 WebSocket disconnected, trying to reconnect...");
+      wsClient.close();
+      delay(100); // Give some time to fully close
       connectToWebSocket();
       lastWsReconnectAttempt = now;
     }
