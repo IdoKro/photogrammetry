@@ -52,7 +52,6 @@ camera_config_t getCameraConfig() {
   config.fb_count = 1;
 
   if (psramFound()) {
-    Serial.printf("PSRAM size: %d bytes\n", ESP.getPsramSize());
     config.jpeg_quality = 10;
     config.fb_count = 2;
     config.grab_mode = CAMERA_GRAB_LATEST;
