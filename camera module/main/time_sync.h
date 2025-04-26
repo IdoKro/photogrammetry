@@ -12,7 +12,7 @@ extern double timeOffset;  // We'll define it in main.ino
 inline void subscribeToTimeSyncEvents() {
   wsClient.onMessage([](WebsocketsMessage message) {
     String data = message.data();
-    Serial.println("Message received: " + data);
+    // Serial.println("Message received: " + data);
 
     StaticJsonDocument<200> doc;
     DeserializationError error = deserializeJson(doc, data);

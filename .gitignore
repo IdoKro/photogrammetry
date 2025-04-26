@@ -1,2 +1,4 @@
 .venv/
 **/arduino_secrets.h
+client/output/
+.idea/

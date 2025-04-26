@@ -19,14 +19,12 @@ inline bool startCamera() {
   return 1;
 }
 
-// --- Trigger Capture ---
 inline void triggerCapture() {
   Serial.println("Capturing...");
 
-  // ⚡ Flash the LED
-  digitalWrite(LED_GPIO_NUM, HIGH);  // Turn on
-  delay(100);                        // Keep it on for 100ms
-  digitalWrite(LED_GPIO_NUM, LOW);   // Turn off
+  digitalWrite(LED_GPIO_NUM, HIGH);
+  delay(100);
+  digitalWrite(LED_GPIO_NUM, LOW);
 
   camera_fb_t *fb = esp_camera_fb_get();
   if (!fb) {
@@ -35,7 +33,15 @@ inline void triggerCapture() {
   }
 
   Serial.printf("Image captured: %d bytes\n", fb->len);
-  // TODO: upload image
+
+  // --- Send image ---
+  bool success = wsClient.sendBinary((const char *)fb->buf, fb->len);
+
+  if (success) {
+    Serial.println("✅ Image sent successfully!");
+  } else {
+    Serial.println("❌ Failed to send image.");
+  }
 
   esp_camera_fb_return(fb);
 }
