@@ -5,13 +5,11 @@
 #include "camera_handler.h"
 #include "network_handler.h"
 #include "esp_timer.h"
-#include "testing.h"
 
 extern esp_timer_handle_t capture_timer;
 extern double timeOffset;  // We'll define it in main.ino
 
 // === Capture Timing ===
-extern double captureRequestReceivedTime;
 
 inline void subscribeToTimeSyncEvents() {
   wsClient.onMessage([](WebsocketsMessage message) {
@@ -32,23 +30,22 @@ inline void subscribeToTimeSyncEvents() {
       double serverTime = doc["time"];
       double localTime = millis() / 1000.0;
       timeOffset = serverTime - localTime;
-      // Serial.print("⏰ Synced time offset: ");
+      // Serial.print("Synced time offset: ");
       // Serial.println(timeOffset, 6);
 
     } else if (type == "capture") {
-      captureRequestReceivedTime = getAccurateTime();
       double targetTime = doc["time"];
       double now = millis() / 1000.0 + timeOffset;
       double delaySec = targetTime - now;
 
       if (delaySec <= 0) {
-        Serial.println("⚠️ Target time passed, capturing immediately.");
+        Serial.println("Target time passed, capturing immediately.");
         triggerCapture();
         return;
       }
 
       unsigned long delayMs = (unsigned long)(delaySec * 1000);
-      Serial.print("📸 Scheduling capture in ");
+      Serial.print("Scheduling capture in ");
       Serial.print(delayMs);
       Serial.println(" ms");
 

@@ -3,7 +3,6 @@
 #include "network_handler.h"
 #include "time_sync.h"
 #include "esp_timer.h"
-#include "testing.h"
 
 esp_timer_handle_t capture_timer;
 double timeOffset = 0;
@@ -11,11 +10,6 @@ double timeOffset = 0;
 // Reconnect variables
 unsigned long lastWsReconnectAttempt = 0;
 const unsigned long WS_RECONNECT_INTERVAL = 5000;
-
-double captureRequestReceivedTime = 0;
-double captureStartedTime = 0;
-double captureCompletedTime = 0;
-double imageSentTime = 0;
 
 void setup() {
 
@@ -27,7 +21,6 @@ void setup() {
   Serial.println("\n");
 
   bool connection_status = connectToWiFi();
-  setupTestingEnvironment();  // Only if testing enabled
   
   bool camera_status = startCamera();
 
@@ -50,7 +43,7 @@ void loop() {
   if (!wsClient.available()) {
     unsigned long now = millis();
     if (now - lastWsReconnectAttempt >= WS_RECONNECT_INTERVAL) {
-      Serial.println("🔄 WebSocket disconnected, trying to reconnect...");
+      Serial.println("WebSocket disconnected, trying to reconnect...");
       wsClient.close();
       delay(100); // Give some time to fully close
       connectToWebSocket();

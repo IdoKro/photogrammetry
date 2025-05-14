@@ -5,13 +5,6 @@
 #include "esp_camera.h"
 #include "camera_pins.h"
 #include "network_handler.h"
-#include "testing.h"
-
-// === Capture Timing ===
-extern double captureStartedTime;
-extern double captureCompletedTime;
-extern double imageSentTime;
-extern double captureRequestReceivedTime;
 
 // --- Start Camera ---
 inline bool startCamera() {
@@ -28,7 +21,6 @@ inline bool startCamera() {
 
 inline void triggerCapture() {
   Serial.println("Capturing...");
-  captureStartedTime = getAccurateTime();
 
   digitalWrite(LED_GPIO_NUM, HIGH);
   delay(100);
@@ -40,23 +32,19 @@ inline void triggerCapture() {
     return;
   }
 
-  captureCompletedTime = getAccurateTime();
-
   Serial.printf("Image captured: %d bytes\n", fb->len);
 
-  int capturedImageSize = fb->len;   // 📸 Save now, before freeing fb!
+  int capturedImageSize = fb->len;   //  Save now, before freeing fb!
 
   // --- Send image ---
   bool success = wsClient.sendBinary((const char *)fb->buf, fb->len);
 
-  esp_camera_fb_return(fb);  // 🔥 After we're done with fb
+  esp_camera_fb_return(fb);  // After we're done with fb
 
   if (success) {
-    Serial.println("✅ Image sent successfully!");
-    imageSentTime = getAccurateTime();
+    Serial.println("Image sent successfully!");
   } else {
-    Serial.println("❌ Failed to send image.");
-    imageSentTime = getAccurateTime();
+    Serial.println("Failed to send image.");
   }
 
   // --- Build metadata JSON ---
@@ -64,16 +52,10 @@ inline void triggerCapture() {
   doc["type"] = "capture_metadata";
   doc["device_id"] = SECRET_DEVICE_NAME;
 
-  JsonObject times = doc.createNestedObject("times");
-  times["capture_request_received"] = captureRequestReceivedTime;
-  times["capture_started"] = captureStartedTime;
-  times["capture_completed"] = captureCompletedTime;
-  times["image_sent"] = imageSentTime;
-
   doc["rssi"] = WiFi.RSSI();
   doc["resolution"] = getCameraConfig().frame_size;
   doc["jpeg_quality"] = getCameraConfig().jpeg_quality;
-  doc["image_size"] = capturedImageSize;   // 📸 use the saved size
+  doc["image_size"] = capturedImageSize;   // use the saved size
 
   String json;
   serializeJson(doc, json);

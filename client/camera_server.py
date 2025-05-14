@@ -40,12 +40,12 @@ async def handle_client(websocket):
 
         if hello.get("type") == "hello":
             device_name = hello.get("device_id", device_name)
-            logger.info(f"🤖 Device name received: {device_name}")
+            logger.info(f"Device name received: {device_name}")
         else:
-            logger.warning(f"⚠️ Unexpected first message: {hello}")
+            logger.warning(f"Unexpected first message: {hello}")
 
     except Exception as e:
-        logger.warning(f"⚠️ No hello message received: {e}")
+        logger.warning(f"No hello message received: {e}")
 
     # Save mapping
     client_name_map[websocket] = device_name
@@ -63,7 +63,7 @@ async def handle_client(websocket):
         async for message in websocket:
             if isinstance(message, bytes):
                 sender_name = client_name_map.get(websocket, f"unknown_{client_id}")
-                logger.info(f"📸 Received image from {sender_name}: {len(message)} bytes")
+                logger.info(f"Received image from {sender_name}: {len(message)} bytes")
 
                 # Save image
                 if current_capture_folder is None:
@@ -73,7 +73,7 @@ async def handle_client(websocket):
                 filename = f"{current_capture_folder}/{sender_name}.jpg"
                 with open(filename, "wb") as f:
                     f.write(message)
-                logger.info(f"💾 Saved {filename}")
+                logger.info(f"Saved {filename}")
 
                 capture_received_clients.add(websocket)
 
@@ -82,9 +82,9 @@ async def handle_client(websocket):
                 if data.get("type") == "capture_metadata":
                     device_name = data.get("device_id", f"unknown_{id(websocket)}")
                     metadata_records[device_name] = data
-                    logger.info(f"📝 Metadata received from {device_name}")
+                    logger.info(f"Metadata received from {device_name}")
                 else:
-                    logger.info(f"📩 Text message: {data}")
+                    logger.info(f"Text message: {data}")
 
     except websockets.exceptions.ConnectionClosed:
         pass
@@ -115,7 +115,7 @@ async def start_server():
             ping_interval=5,  # send pings every 5 seconds
             ping_timeout=10  # disconnect if no pong after 5 seconds
     ):
-        logger.info(f"🌐 WebSocket server started on port {PORT}")
+        logger.info(f"WebSocket server started on port {PORT}")
         await asyncio.Future()  # Run forever
 
 # === Trigger capture and wait ===
@@ -136,8 +136,8 @@ async def trigger_capture_and_wait(sync_delay=SYNC_DELAY, timeout=TIMEOUT):
         "time": capture_time
     }
 
-    logger.info(f"\n📸 Sending capture request for T = {capture_time:.3f} to {len(connected_clients)} clients")
-    logger.info(f"🗂️ Images will be saved to: {current_capture_folder}")
+    logger.info(f"Sending capture request for T = {capture_time:.3f} to {len(connected_clients)} clients")
+    logger.info(f"Images will be saved to: {current_capture_folder}")
 
     if connected_clients:
         await asyncio.gather(*[client.send(json.dumps(message)) for client in connected_clients])
@@ -166,7 +166,7 @@ async def trigger_capture_and_wait(sync_delay=SYNC_DELAY, timeout=TIMEOUT):
 
     if missing_clients:
         missing_names = [client_name_map.get(client, f"unknown_{id(client)}") for client in missing_clients]
-        logger.warning(f"⚠️ Missing images from: {missing_names}")
+        logger.warning(f"Missing images from: {missing_names}")
         return {
             "success": False,
             "missing": missing_names,
@@ -174,81 +174,8 @@ async def trigger_capture_and_wait(sync_delay=SYNC_DELAY, timeout=TIMEOUT):
             "folder": current_capture_folder}
     else:
         images_received_time = time.time()
-        logger.info("✅ All images received!")
-
-        save_capture_to_csv(
-            current_capture_folder,
-            metadata_records,
-            capture_request_received_time,
-            images_received_time,
-            sync_delay,
-            len(capture_expected_clients)
-        )
+        logger.info("All images received!")
 
         return {"success": True,
                 "saved_images": saved_images,
                 "folder": current_capture_folder}
-
-
-
-def save_capture_to_csv(capture_folder, metadata_records, capture_request_received_time, images_received_time, sync_delay, num_modules):
-    csv_path = datasheet_name
-    file_exists = os.path.isfile(csv_path)
-
-    # Build list of all devices
-    all_devices = sorted(metadata_records.keys())
-
-    # Build CSV header dynamically
-    fieldnames = ["capture_folder", "capture_request_received_time", "images_received_time", "sync_delay", "num_modules"]
-    for device in all_devices:
-        fieldnames.extend([
-            f"{device}_capture_request_received",
-            f"{device}_capture_started",
-            f"{device}_capture_completed",
-            f"{device}_image_sent",
-            f"{device}_rssi",
-            f"{device}_resolution",
-            f"{device}_jpeg_quality",
-            f"{device}_image_size",
-        ])
-
-    # Now always open the file for reading first (if exists)
-    old_rows = []
-    if file_exists:
-        with open(csv_path, mode='r', newline='') as csvfile:
-            reader = csv.DictReader(csvfile)
-            for row in reader:
-                old_rows.append(row)
-
-    # Now overwrite file
-    with open(csv_path, mode='w', newline='') as csvfile:
-        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-        writer.writeheader()
-
-        # Re-write old rows, adapting them
-        for old_row in old_rows:
-            adapted_row = {field: old_row.get(field, "") for field in fieldnames}
-            writer.writerow(adapted_row)
-
-        # Write new row
-        new_row = {
-            "capture_folder": capture_folder,
-            "capture_request_received_time": capture_request_received_time,
-            "images_received_time": images_received_time,
-            "sync_delay": sync_delay,
-            "num_modules": num_modules,
-        }
-
-        for device, meta in metadata_records.items():
-            times = meta.get("times", {})
-            new_row[f"{device}_capture_request_received"] = times.get("capture_request_received")
-            new_row[f"{device}_capture_started"] = times.get("capture_started")
-            new_row[f"{device}_capture_completed"] = times.get("capture_completed")
-            new_row[f"{device}_image_sent"] = times.get("image_sent")
-
-            new_row[f"{device}_rssi"] = meta.get("rssi")
-            new_row[f"{device}_resolution"] = meta.get("resolution")
-            new_row[f"{device}_jpeg_quality"] = meta.get("jpeg_quality")
-            new_row[f"{device}_image_size"] = meta.get("image_size")
-
-        writer.writerow(new_row)

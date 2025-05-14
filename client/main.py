@@ -35,9 +35,9 @@ async def wait_for_user_input():
         num_images = result["saved_images"]
         folder = result["folder"]
 
-        print(f"🎉 Capture successful! {num_images} Images were saved to {folder}")
+        print(f"Capture successful! {num_images} Images were saved to {folder}")
     else:
-        print(f"❌ Capture failed. Missing images from: {result.get('missing', [])}")
+        print(f"Capture failed. Missing images from: {result.get('missing', [])}")
 
 
 async def main():
