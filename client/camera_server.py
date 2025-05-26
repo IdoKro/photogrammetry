@@ -11,7 +11,7 @@ logger.setLevel(logging.INFO)
 
 PORT = 8765
 SYNC_DELAY = 2  # seconds from now to capture
-TIMEOUT = 5     # seconds to wait for images
+TIMEOUT = 15     # seconds to wait for images
 
 connected_clients = set()
 client_name_map = {}  # NEW: websocket -> device name
@@ -86,7 +86,7 @@ async def handle_client(websocket):
                 else:
                     logger.info(f"Text message: {data}")
 
-    except websockets.exceptions.ConnectionClosed:
+    except websockets.exceptions.ConnectionClosed as e:
         pass
 
     finally:
@@ -112,8 +112,8 @@ async def start_server():
             handle_client,
             "0.0.0.0",
             PORT,
-            ping_interval=5,  # send pings every 5 seconds
-            ping_timeout=10  # disconnect if no pong after 5 seconds
+            ping_interval=10,  # send pings every 5 seconds
+            ping_timeout=60  # disconnect if no pong after 5 seconds
     ):
         logger.info(f"WebSocket server started on port {PORT}")
         await asyncio.Future()  # Run forever
@@ -138,6 +138,7 @@ async def trigger_capture_and_wait(sync_delay=SYNC_DELAY, timeout=TIMEOUT):
 
     logger.info(f"Sending capture request for T = {capture_time:.3f} to {len(connected_clients)} clients")
     logger.info(f"Images will be saved to: {current_capture_folder}")
+    capturing_time = time.time()
 
     if connected_clients:
         await asyncio.gather(*[client.send(json.dumps(message)) for client in connected_clients])
@@ -175,6 +176,7 @@ async def trigger_capture_and_wait(sync_delay=SYNC_DELAY, timeout=TIMEOUT):
     else:
         images_received_time = time.time()
         logger.info("All images received!")
+        logger.info(f"Capture duration: {time.time() - capturing_time:.3f} seconds")
 
         return {"success": True,
                 "saved_images": saved_images,

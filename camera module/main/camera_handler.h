@@ -5,6 +5,7 @@
 #include "esp_camera.h"
 #include "camera_pins.h"
 #include "network_handler.h"
+#include "arduino_secrets.h"
 
 // --- Start Camera ---
 inline bool startCamera() {
@@ -22,14 +23,18 @@ inline bool startCamera() {
 inline void triggerCapture() {
   Serial.println("Capturing...");
 
-  digitalWrite(LED_GPIO_NUM, HIGH);
-  delay(100);
-  digitalWrite(LED_GPIO_NUM, LOW);
+  if (DEBUG){
+    digitalWrite(LED_GPIO_NUM, HIGH);
+  }
 
   camera_fb_t *fb = esp_camera_fb_get();
   if (!fb) {
     Serial.println("Failed to capture image.");
     return;
+  }
+  
+  if (DEBUG){
+    digitalWrite(LED_GPIO_NUM, LOW);
   }
 
   Serial.printf("Image captured: %d bytes\n", fb->len);
