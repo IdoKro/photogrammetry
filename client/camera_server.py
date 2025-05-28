@@ -99,7 +99,8 @@ async def broadcast_time():
     while True:
         if connected_clients:
             now = time.time()
-            message = {
+            message = \
+                {
                 "type": "sync",
                 "time": now
             }
