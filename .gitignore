@@ -1,5 +1,7 @@
 .venv/
+.vscode/
 **/arduino_secrets.h
 client/output/
 .idea/
 __pycache__/
+PCB/
