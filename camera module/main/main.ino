@@ -1,8 +1,11 @@
 #include <Arduino.h>
+#include "arduino_secrets.h"
+#include "camera_pins.h"
 #include "camera_handler.h"
 #include "network_handler.h"
-#include "time_sync.h"
 #include "esp_timer.h"
+#include "debug.h"
+
 
 esp_timer_handle_t capture_timer;
 double timeOffset = 0;
@@ -18,7 +21,7 @@ void setup() {
 
   Serial.begin(115200);
   delay(500);  // Let USB and peripherals settle
-  Serial.println("\n");
+  debugPrintln("\n");
 
   bool connection_status = connectToWiFi();
   
@@ -33,7 +36,7 @@ void setup() {
   esp_timer_create(&timer_args, &capture_timer);
   
   connectToWebSocket();
-  subscribeToTimeSyncEvents();
+  eventListener();
 }
 
 // --- Loop ---
@@ -43,7 +46,7 @@ void loop() {
   if (!wsClient.available()) {
     unsigned long now = millis();
     if (now - lastWsReconnectAttempt >= WS_RECONNECT_INTERVAL) {
-      Serial.println("WebSocket disconnected, trying to reconnect...");
+      debugPrintln("WebSocket disconnected, trying to reconnect...");
       wsClient.close();
       delay(100); // Give some time to fully close
       connectToWebSocket();
