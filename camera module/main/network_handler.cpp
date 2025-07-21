@@ -100,6 +100,7 @@ void sendStatus() {
   wsClient.send(json);
 }
 
+// Initial connection to WebSockets
 void connectToWebSocket() {
   wsClient.onEvent([](WebsocketsEvent event, String data) {
     if (event == WebsocketsEvent::ConnectionOpened) {
@@ -120,10 +121,10 @@ void connectToWebSocket() {
   }
 }
 
+// Process incoming WebSocket messages from the server
 void eventListener() {
   wsClient.onMessage([](WebsocketsMessage message) {
     String data = message.data();
-    // debugPrintln("Message received: " + data);
 
     StaticJsonDocument<200> doc;
     DeserializationError error = deserializeJson(doc, data);

@@ -3,8 +3,9 @@
 #include "debug.h"
 #include "network_handler.h"
 
+// Initialize camera and log result
 bool startCamera() {
-    camera_config_t config = getCameraConfig();
+    camera_config_t config = getCameraConfig(); // from camera_pins.h
     esp_err_t err = esp_camera_init(&config);
     if (err != ESP_OK) {
         debugPrintf("Camera init failed with error 0x%x", err);
@@ -14,6 +15,7 @@ bool startCamera() {
     return true;
 }
 
+// Trigger image capture and transmission
 void triggerCapture() {
     debugPrintln("Capturing...");
     camera_fb_t *fb = esp_camera_fb_get();

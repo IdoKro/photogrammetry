@@ -2,6 +2,8 @@
 
 #include "esp_camera.h"
 
-// Declare API
+// Initializes the camera hardware
 bool startCamera();
+
+// Captures and sends a frame over the network
 void triggerCapture();

@@ -5,11 +5,11 @@
 #include <stdio.h>
 #include <stdarg.h>
 
-// This module includes debugging functions to be executed only if in debug mode
+// Enable or disable debug prints globally
 #define DEBUG true
 
 
-// Debug print
+// Print with newline if DEBUG enabled
 template<typename T>
 inline void debugPrintln(const T& message) {
   if (DEBUG) {
@@ -17,7 +17,7 @@ inline void debugPrintln(const T& message) {
   }
 }
 
-// Debug print without newline
+// Print without newline if DEBUG enabled
 template<typename T>
 inline void debugPrint(const T& message) {
   if (DEBUG) {
@@ -25,7 +25,7 @@ inline void debugPrint(const T& message) {
   }
 }
 
-// printf-style debug output
+// Printf-style debug function
 inline void debugPrintf(const char* format, ...) {
   if (!DEBUG) return;
 
