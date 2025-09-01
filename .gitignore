@@ -6,3 +6,4 @@ client/output/
 __pycache__/
 PCB/
 /camera module/main/build
+ota_server/*/firmware
