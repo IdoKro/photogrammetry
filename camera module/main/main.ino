@@ -57,6 +57,7 @@ void loop() {
   if (!wsClient.available()) {
     unsigned long now = millis();
     if (now - lastWsRestart >= WS_RESTART_INTERVAL){
+        debugPrintln("\nWebSocket disconnected for too long, REBOOTING...\n");
         ESP.restart();
         lastWsRestart = now;
     }
