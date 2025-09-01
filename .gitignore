@@ -5,3 +5,4 @@ client/output/
 .idea/
 __pycache__/
 PCB/
+/camera module/main/build
