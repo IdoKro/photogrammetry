@@ -181,7 +181,7 @@ async def broadcast_time():
                 "time": now
             }
             await asyncio.gather(*[client.send(json.dumps(message)) for client in connected_clients])
-        await asyncio.sleep(5)
+        await asyncio.sleep(60)
 
 # === Start server ===
 async def start_server():

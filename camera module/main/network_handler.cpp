@@ -18,6 +18,17 @@ extern double timeOffset;  // defined in main.ino
 static const unsigned long WIFI_BOOT_TIMEOUT_MS = 10000; // 10s → reboot if can't connect at boot
 static const unsigned long WS_RETRY_BACKOFF_MS  = 4000;  // try WS connect every 4s when needed
 
+// ===== Heartbeat =====
+static const unsigned long HB_INTERVAL_MS  = 12000; // send PING every 12s
+static const unsigned long HB_TIMEOUT_MS   = 3000;  // expect PONG within 3s
+static const uint8_t       HB_MAX_MISSES   = 2;     // after 2 misses → reconnect
+static const unsigned long SOFT_WD_MS      = 45000; // no RX/PONG for 45s → reconnect
+
+static bool          s_waitingPong    = false;
+static uint8_t       s_pongMisses     = 0;
+static unsigned long s_lastPingMs     = 0;
+static unsigned long s_lastActivityMs = 0; // any RX, PONG, or connect
+
 WebsocketsClient wsClient;
 
 // connection state
@@ -137,18 +148,31 @@ void connectToWebSocket() {
   if (!handlersBound) {
     handlersBound = true;
 
-    wsClient.onEvent([](WebsocketsEvent event, String){
-      if (event == WebsocketsEvent::ConnectionOpened) {
-        s_wsConnected = true;
-        debugPrintln("WebSocket connected.");
-        sendHelloMessage();
-      } else if (event == WebsocketsEvent::ConnectionClosed) {
-        if (s_wsConnected) debugPrintln("WebSocket disconnected.");
-        s_wsConnected = false;
-      }
-    });
+  wsClient.onEvent([](WebsocketsEvent event, String){
+    if (event == WebsocketsEvent::ConnectionOpened) {
+      s_wsConnected   = true;
+      s_waitingPong   = false;
+      s_pongMisses    = 0;
+      s_lastActivityMs= millis();
+      debugPrintln("WebSocket connected.");
+      sendHelloMessage();
+    } else if (event == WebsocketsEvent::ConnectionClosed) {
+      if (s_wsConnected) debugPrintln("WebSocket disconnected.");
+      s_wsConnected   = false;
+      s_waitingPong   = false;
+    } else if (event == WebsocketsEvent::GotPong) {
+      s_lastActivityMs= millis();
+      s_waitingPong   = false;
+      s_pongMisses    = 0;
+      // debugPrintln("[WS] PONG");
+    } else if (event == WebsocketsEvent::GotPing) {
+      s_lastActivityMs= millis(); // library auto-replies
+    }
+  });
 
     wsClient.onMessage([](WebsocketsMessage message) {
+      s_lastActivityMs = millis();
+      
       String data = message.data();
 
       StaticJsonDocument<200> doc;
@@ -163,13 +187,16 @@ void connectToWebSocket() {
 
       if (type == "sync") {
         double serverTime = doc["time"];
-        double localTime  = millis() / 1000.0;
+        double localTime = (double)esp_timer_get_time() / 1e6;
         timeOffset = serverTime - localTime;
       }
       else if (type == "capture") {
         double targetTime = doc["time"];
-        double now        = millis() / 1000.0 + timeOffset;
+        double now = (double)esp_timer_get_time() / 1e6 + timeOffset;
         double delaySec   = targetTime - now;
+        
+        // tiny tolerance
+        if (delaySec < 0 && delaySec > -0.010) delaySec = 0;
 
         if (delaySec <= 0) {
           debugPrintln("Target time passed, capturing immediately.");
@@ -201,17 +228,20 @@ void connectToWebSocket() {
 // ---------- Keepalive / Reconnect loop ----------
 
 void networkLoop() {
-  // Always pump the client
+  // Always pump the client first (non-blocking)
   wsClient.poll();
 
   // Track Wi-Fi status each iteration (portable across core versions)
   s_wifiUp = (WiFi.status() == WL_CONNECTED);
 
-  // If Wi-Fi dropped while WS connected, close WS once (prevents half-open)
+  // If Wi-Fi dropped while WS was connected, close WS once (prevents half-open)
   if (!s_wifiUp && s_wsConnected) {
     debugPrintln("[WS] Wi-Fi down → closing WS");
     wsClient.close();
-    s_wsConnected = false;
+    s_wsConnected  = false;
+    s_waitingPong  = false;
+    s_pongMisses   = 0;
+    // no return: we’ll wait for Wi-Fi to come back and reconnect below
   }
 
   // If Wi-Fi is up but WS isn't, attempt reconnect with backoff
@@ -219,7 +249,55 @@ void networkLoop() {
     const unsigned long now = millis();
     if (now - s_lastWsAttemptMs >= WS_RETRY_BACKOFF_MS) {
       s_lastWsAttemptMs = now;
-      connectToWebSocket();  // single attempt
+      connectToWebSocket();  // single attempt; no flapping
+    }
+    // When not connected, reset heartbeat state
+    s_waitingPong = false;
+    s_pongMisses  = 0;
+    return;  // nothing else to do until WS connects
+  }
+
+  // ----- At this point, WS is connected (or Wi-Fi is down and we already closed WS) -----
+  if (!s_wsConnected) return;
+
+  const unsigned long now = millis();
+
+  // Soft watchdog: no activity (no RX/PONG) for too long → reconnect
+  if (s_lastActivityMs && (now - s_lastActivityMs) > SOFT_WD_MS) {
+    debugPrintln("[WS] Soft watchdog timeout → reconnect");
+    wsClient.close();          // force tear-down; backoff will reopen
+    s_wsConnected  = false;
+    s_waitingPong  = false;
+    s_pongMisses   = 0;
+    return;
+  }
+
+  // Heartbeat: send PING periodically and expect PONG quickly
+  if (!s_waitingPong && (now - s_lastPingMs) >= HB_INTERVAL_MS) {
+    if (wsClient.ping()) {
+      s_waitingPong = true;
+      s_lastPingMs  = now;
+      // debugPrintln("[WS] PING");
+    } else {
+      // Couldn't send ping → connection is dodgy; restart WS
+      debugPrintln("[WS] ping() failed → reconnect");
+      wsClient.close();
+      s_wsConnected  = false;
+      s_waitingPong  = false;
+      s_pongMisses   = 0;
+      return;
+    }
+  }
+
+  // If awaiting PONG, enforce timeout and count misses
+  if (s_waitingPong && (now - s_lastPingMs) >= HB_TIMEOUT_MS) {
+    s_waitingPong = false;   // allow next ping
+    if (++s_pongMisses >= HB_MAX_MISSES) {
+      debugPrintln("[WS] PONG timeout (max misses) → reconnect");
+      wsClient.close();
+      s_wsConnected  = false;
+      s_pongMisses   = 0;
+      return;
     }
   }
 }

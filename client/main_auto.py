@@ -59,6 +59,8 @@ async def main():
     # Start the server
     asyncio.create_task(camera_server.start_server())
 
+    asyncio.create_task(camera_server.broadcast_time())
+
     await asyncio.sleep(10)  # give server a moment to start
 
     await wait_for_user_input()

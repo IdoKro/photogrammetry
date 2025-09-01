@@ -151,9 +151,13 @@ class App(tk.Tk):
 
         self.after(500,self.scan)
 
-        # start server
-        self.server_future=_async.run(camera_server.start_server())
-        self.protocol("WM_DELETE_WINDOW",self.on_close)
+        # start server tasks on THE SAME loop and keep strong refs
+        self.server_futs = []
+        self.server_futs.append(_async.run(camera_server.start_server()))
+        if hasattr(camera_server, "broadcast_time"):
+            self.server_futs.append(_async.run(camera_server.broadcast_time()))
+
+        self.protocol("WM_DELETE_WINDOW", self.on_close)
 
     def ensure_tile(self,cam_id):
         if cam_id not in self.tiles:
@@ -174,15 +178,38 @@ class App(tk.Tk):
         self.after(1000,self.scan)
 
     def capture(self):
-        for t in self.tiles.values(): t.set_phase("REQUESTED")
-        def worker():
-            fut=_async.run(camera_server.trigger_capture_and_wait())
-            res=fut.result()
-            camera_server.logger.info(f"Capture result: {res}")
-        threading.Thread(target=worker,daemon=True).start()
+        # UI: mark REQUESTED right away
+        for t in self.tiles.values():
+            t.set_phase("REQUESTED")
+
+        async def _invoke_on_server_loop():
+            """
+            This runs entirely inside the SAME event loop where start_server() runs.
+            Any loop.time()/asyncio.sleep in camera_server will now be consistent.
+            """
+            if asyncio.iscoroutinefunction(camera_server.trigger_capture_and_wait):
+                return await camera_server.trigger_capture_and_wait()
+            # If it isn't a coroutine function, run it in a thread but keep this wrapper on the server loop
+            loop = asyncio.get_running_loop()
+            return await loop.run_in_executor(None, camera_server.trigger_capture_and_wait)
+
+        def _worker():
+            try:
+                fut = _async.run(_invoke_on_server_loop())
+                res = fut.result()  # waits in this worker thread only
+                camera_server.logger.info(f"Capture result: {res}")
+            except Exception as e:
+                camera_server.logger.error(f"Capture error: {e}")
+
+        threading.Thread(target=_worker, daemon=True).start()
 
     def on_close(self):
-        if self.server_future: self.server_future.cancel()
+        # cancel all long-running server tasks first
+        for f in getattr(self, "server_futs", []):
+            try:
+                f.cancel()
+            except Exception:
+                pass
         _async.stop()
         self.destroy()
 
