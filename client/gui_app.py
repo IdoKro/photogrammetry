@@ -5,6 +5,8 @@ from PIL import Image, ImageTk, ImageFile
 import camera_server
 import os
 import logging
+import threading
+from tkinter import messagebox
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True  # allow fast partial images safely
 
@@ -126,18 +128,18 @@ class CaptureApp:
         self.update_devices(force=True)
 
     def update_devices(self, force=False):
-        if not force:
-            self.root.after(2000, self.update_devices)
+        self.root.after(2000, self.update_devices)
 
-        existing_names = {camera_server.client_name_map.get(ws, f"unknown_{id(ws)}")
-                          for ws in camera_server.connected_clients}
+        existing_macs = set(camera_server.client_mac_map.get(ws)
+                            for ws in camera_server.connected_clients
+                            if camera_server.client_mac_map.get(ws))
 
         # Remove disconnected devices
-        to_delete = [name for name in self.device_widgets if name not in existing_names]
+        to_delete = [mac for mac in self.device_widgets if mac not in existing_macs]
         for name in to_delete:
             del self.device_widgets[name]
 
-        sorted_names = sorted(existing_names)
+        sorted_names = sorted(existing_macs)
         num_devices = len(sorted_names)
 
         if num_devices == 0:
@@ -181,18 +183,24 @@ class CaptureApp:
             if cols > num_devices:
                 break
 
-        for idx, name in enumerate(sorted_names):
+        for idx, mac in enumerate(sorted_names):
             row = idx // cols
             col = idx % cols
             x = margin + col * (device_size + margin)
             y = margin + row * (device_size + margin + 20)
 
-            if name not in self.device_widgets:
-                widget = DeviceWidget(self.canvas, name, x, y, size=device_size)
-                self.device_widgets[name] = widget
-            else:
-                widget = self.device_widgets[name]
-                widget.update_position(x, y, device_size)
+            metadata = camera_server.metadata_records.get(mac, {})
+            label = metadata.get("device_id", mac)
+
+            if mac not in self.device_widgets:
+                # Temporarily create with MAC; we'll update label immediately after
+                widget = DeviceWidget(self.canvas, mac, x, y, size=device_size)
+                self.device_widgets[mac] = widget
+
+            widget = self.device_widgets[mac]
+            widget.name = label
+            self.canvas.itemconfig(widget.text, text=label)  # <-- crucial line to update the canvas
+            widget.update_position(x, y, device_size)
 
     def capture(self):
         for widget in self.device_widgets.values():
@@ -200,17 +208,29 @@ class CaptureApp:
         threading.Thread(target=self.capture_async).start()
 
     def capture_async(self):
-        result = asyncio.run(camera_server.trigger_capture_and_wait())
+        loop = asyncio.get_event_loop_policy().new_event_loop()
+        asyncio.set_event_loop(loop)
 
-        output_folder = result.get('folder')
+        future = asyncio.run_coroutine_threadsafe(camera_server.trigger_capture_and_wait(), loop)
+        result = future.result()  # blocks until done, but not in main thread
 
-        for name, widget in self.device_widgets.items():
-            image_path = os.path.join(output_folder, f"{name}.jpg")
+        loop.stop()
+        loop.close()
+
+        for mac, widget in self.device_widgets.items():
+            metadata = camera_server.metadata_records.get(mac)
+            if not metadata:
+                continue  # Skip if no metadata
+
+            device_id = metadata.get("device_id", mac)  # fallback to MAC
+            safe_device_id = camera_server.sanitize_filename(device_id)
+            safe_mac = camera_server.sanitize_filename(mac)
+
+            image_path = os.path.join(output_folder, f"{safe_device_id}-{safe_mac}.jpg")
+
             if os.path.exists(image_path):
                 widget.set_image(image_path)
-            else:
-                # Leave orange if image missing
-                pass
+
 
 def run():
     threading.Thread(target=lambda: asyncio.run(camera_server.start_server()), daemon=True).start()

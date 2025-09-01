@@ -186,14 +186,21 @@ async def broadcast_time():
 # === Start server ===
 async def start_server():
     async with websockets.serve(
-            handle_client,
-            "0.0.0.0",
-            PORT,
-            ping_interval=20,  # send pings every 5 seconds
-            ping_timeout=60  # disconnect if no pong after 5 seconds
+        handle_client,
+        "0.0.0.0",
+        PORT,
+        ping_interval=20,
+        ping_timeout=60
     ):
         logger.info(f"WebSocket server started on port {PORT}")
-        await asyncio.Future()  # Run forever
+        try:
+            # park forever until cancelled
+            await asyncio.Future()
+        except asyncio.CancelledError:
+            logger.info("Server task cancelled — shutting down websocket server gracefully.")
+            # give clients a tick to close if you want:
+            await asyncio.sleep(0)
+            raise  # let the cancellation propagate cleanly
 
 # === Trigger capture and wait ===
 async def trigger_capture_and_wait(sync_delay=SYNC_DELAY, timeout=TIMEOUT):
