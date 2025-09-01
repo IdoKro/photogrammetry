@@ -7,6 +7,7 @@
 #include "esp_timer.h"
 #include "esp_camera.h"
 #include "camera_pins.h"
+#include "utils.h"
 
 using namespace websockets;
 
@@ -46,11 +47,19 @@ bool connectToWiFi() {
   }
 }
 
+void addCommonMetadata(JsonDocument& doc) {
+  doc["device_id"] = SECRET_DEVICE_NAME;
+  doc["mac"] = getMacAddress();
+  doc["firmware_version"] = OTA_FIRMWARE_VERSION;
+  doc["board_type"] = getBoardType();
+}
+
 void sendHelloMessage() {
   // Send hello message
   StaticJsonDocument<200> doc;
   doc["type"] = "hello";
-  doc["device_id"] = SECRET_DEVICE_NAME;
+  addCommonMetadata(doc);
+
   
   String payload;
   serializeJson(doc, payload);
@@ -74,9 +83,10 @@ void sendImageMetadata(int capturedImageSize) {
   // Send metadata JSON
   StaticJsonDocument<512> doc;
   doc["type"] = "capture_metadata";
-  doc["device_id"] = SECRET_DEVICE_NAME;
+  addCommonMetadata(doc);
 
   doc["rssi"] = WiFi.RSSI();
+  
   doc["resolution"] = getCameraConfig().frame_size;
   doc["jpeg_quality"] = getCameraConfig().jpeg_quality;
   doc["image_size"] = capturedImageSize;   // use the saved size
@@ -91,7 +101,7 @@ void sendStatus() {
   // Send status JSON
   StaticJsonDocument<512> doc;
   doc["type"] = "status";
-  doc["device_id"] = SECRET_DEVICE_NAME;
+  addCommonMetadata(doc);
   doc["rssi"] = WiFi.RSSI();
 
   String json;

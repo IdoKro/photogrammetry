@@ -26,8 +26,8 @@ camera_config_t getCameraConfig() {
   config.pin_pwdn = PWDN_GPIO_NUM;
   config.pin_reset = RESET_GPIO_NUM;
   config.xclk_freq_hz = 20000000;
-  // config.frame_size = FRAMESIZE_SXGA;
-  config.frame_size = FRAMESIZE_UXGA;
+  config.frame_size = FRAMESIZE_SXGA;
+  // config.frame_size = FRAMESIZE_UXGA;
   config.pixel_format = PIXFORMAT_JPEG;  // for streaming
   config.grab_mode = CAMERA_GRAB_WHEN_EMPTY;
   config.fb_location = CAMERA_FB_IN_PSRAM;
