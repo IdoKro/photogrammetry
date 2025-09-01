@@ -13,15 +13,39 @@ PORT = 8765
 SYNC_DELAY = 2  # seconds from now to capture
 TIMEOUT = 15     # seconds to wait for images
 
+METADATA_CSV_PATH = "metadata_log.csv"
+METADATA_FIELDS = ["timestamp",
+                   "mac",
+                   "device_id",
+                   "firmware_version",
+                   "board_type",
+                   "rssi",
+                   "resolution",
+                   "jpeg_quality",
+                   "image_size",
+                   "duration",
+                   "sync_delay"]
+
+# Ensure CSV file exists with headers
+if not os.path.exists(METADATA_CSV_PATH):
+    with open(METADATA_CSV_PATH, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=METADATA_FIELDS)
+        writer.writeheader()
+
 connected_clients = set()
-client_name_map = {}  # NEW: websocket -> device name
-current_capture_folder = None
-metadata_records = {}  # NEW: device_name -> metadata dictionary
+client_name_map = {}         # websocket -> user-friendly name
+client_mac_map = {}          # websocket -> MAC
+mac_to_ws = {}               # MAC -> websocket
+image_receive_times = {}     # MAC -> time
+metadata_records = {}        # MAC -> latest metadata
 
 capture_expected_clients = set()
 capture_received_clients = set()
 
 datasheet_name = f"capture_log{time.time()}.csv"
+
+def sanitize_filename(s):
+    return "".join(c for c in s if c.isalnum() or c in "-_")
 
 # === Handle each client ===
 async def handle_client(websocket):
@@ -29,7 +53,9 @@ async def handle_client(websocket):
 
     connected_clients.add(websocket)
     client_id = id(websocket)
-    device_name = f"client_{client_id}"  # fallback if no hello
+
+    mac_id = None
+    device_name = f"client_{client_id}"
 
     logger.info(f"[+] Client {client_id} connected. Total: {len(connected_clients)}")
 
@@ -39,8 +65,15 @@ async def handle_client(websocket):
         hello = json.loads(hello_raw)
 
         if hello.get("type") == "hello":
+            mac_id = hello.get("mac")
             device_name = hello.get("device_id", device_name)
-            logger.info(f"Device name received: {device_name}")
+            if not mac_id:
+                logger.warning("No MAC provided — treating as anonymous")
+            else:
+                client_mac_map[websocket] = mac_id
+                mac_to_ws[mac_id] = websocket
+
+            logger.info(f"Connected: {device_name} (MAC: {mac_id})")
         else:
             logger.warning(f"Unexpected first message: {hello}")
 
@@ -63,6 +96,7 @@ async def handle_client(websocket):
         async for message in websocket:
             if isinstance(message, bytes):
                 sender_name = client_name_map.get(websocket, f"unknown_{client_id}")
+                mac = client_mac_map.get(websocket)
                 logger.info(f"Received image from {sender_name}: {len(message)} bytes")
 
                 # Save image
@@ -70,19 +104,58 @@ async def handle_client(websocket):
                     current_capture_folder = "output/uncategorized"  # fallback
                     os.makedirs(current_capture_folder, exist_ok=True)
 
-                filename = f"{current_capture_folder}/{sender_name}.jpg"
+                safe_device_name = sanitize_filename(sender_name)
+                safe_mac = sanitize_filename(mac)
+                filename = f"{current_capture_folder}/{safe_device_name}-{safe_mac}.jpg"
                 with open(filename, "wb") as f:
                     f.write(message)
                 logger.info(f"Saved {filename}")
+
+                if mac:
+                    image_receive_times[mac] = time.time()
 
                 capture_received_clients.add(websocket)
 
             else:
                 data = json.loads(message)
                 if data.get("type") == "capture_metadata":
+                    mac_id = data.get("mac")
                     device_name = data.get("device_id", f"unknown_{id(websocket)}")
-                    metadata_records[device_name] = data
-                    logger.info(f"Metadata received from {device_name}")
+
+                    metadata_records[mac_id] = data
+                    logger.info(f"Metadata received from {device_name} (MAC: {mac_id})")
+
+                    img_time = image_receive_times.get(mac_id)
+                    if img_time and capture_request_received_time:
+                        duration = img_time - capture_request_received_time
+                    else:
+                        duration = None
+
+                    # Prepend to CSV file
+                    row = {
+                        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
+                        "mac": mac_id,
+                        "device_id": data.get("device_id", ""),
+                        "firmware_version": data.get("firmware_version", ""),
+                        "board_type": data.get("board_type", ""),
+                        "rssi": data.get("rssi", ""),
+                        "resolution": data.get("resolution", ""),
+                        "jpeg_quality": data.get("jpeg_quality", ""),
+                        "image_size": data.get("image_size", ""),
+                        "duration": duration,
+                        "sync_delay": SYNC_DELAY
+                    }
+
+                    try:
+                        with open(METADATA_CSV_PATH, "r", newline="") as f:
+                            existing = list(f)
+                        with open(METADATA_CSV_PATH, "w", newline="") as f:
+                            f.write(','.join(METADATA_FIELDS) + '\n')  # ensure header
+                            writer = csv.DictWriter(f, fieldnames=METADATA_FIELDS)
+                            writer.writerow(row)
+                            f.writelines(existing[1:] if existing and "timestamp" in existing[0] else existing)
+                    except Exception as e:
+                        logger.error(f"Failed to update metadata CSV: {e}")
                 else:
                     logger.info(f"Text message: {data}")
 
@@ -92,6 +165,9 @@ async def handle_client(websocket):
     finally:
         connected_clients.remove(websocket)
         client_name_map.pop(websocket, None)
+        if websocket in client_mac_map:
+            mac = client_mac_map.pop(websocket)
+            mac_to_ws.pop(mac, None)
         logger.info(f"[-] Client {device_name} disconnected. Total: {len(connected_clients)}")
 
 # === Periodic broadcast ===
@@ -113,7 +189,7 @@ async def start_server():
             handle_client,
             "0.0.0.0",
             PORT,
-            ping_interval=10,  # send pings every 5 seconds
+            ping_interval=20,  # send pings every 5 seconds
             ping_timeout=60  # disconnect if no pong after 5 seconds
     ):
         logger.info(f"WebSocket server started on port {PORT}")
@@ -121,7 +197,7 @@ async def start_server():
 
 # === Trigger capture and wait ===
 async def trigger_capture_and_wait(sync_delay=SYNC_DELAY, timeout=TIMEOUT):
-    global current_capture_folder, capture_expected_clients, capture_received_clients
+    global current_capture_folder, capture_expected_clients, capture_received_clients, capture_request_received_time
 
     capture_request_received_time = time.time()
     capture_time = capture_request_received_time + sync_delay
